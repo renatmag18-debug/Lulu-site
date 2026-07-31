@@ -167,8 +167,26 @@
 <script>
 document.addEventListener('DOMContentLoaded', () => {
   const SVG_NS = 'http://www.w3.org/2000/svg';
-  const DELAY_STEP = 9; // ms between each particle's start, in silhouette order
-  const PARTICLE_DURATION = 500; // matches the CSS animation duration
+
+  // Single shared scroll driver: every scroll-linked effect on the page
+  // (hero heart, catalog item particles) registers a render(scrollY) fn
+  // here instead of managing its own listener, so we only ever do one
+  // rAF-throttled pass per scroll/resize event.
+  const renderers = [];
+  let ticking = false;
+  function renderAll() {
+    ticking = false;
+    const scrollY = window.scrollY || window.pageYOffset || 0;
+    renderers.forEach(fn => fn(scrollY));
+  }
+  function requestRender() {
+    if (!ticking) {
+      ticking = true;
+      requestAnimationFrame(renderAll);
+    }
+  }
+  window.addEventListener('scroll', requestRender, { passive: true });
+  window.addEventListener('resize', requestRender);
 
   // Traces a parametric heart curve into outline + interior fill points,
   // in the same {x,y,c} shape as the product photo data, so the hero can
@@ -205,137 +223,88 @@ document.addEventListener('DOMContentLoaded', () => {
     return points;
   }
 
-  // --- Hero heart: assembles as you scroll, not on load or a fixed timer ---
-  // Progress is driven by how far the page has actually been scrolled from
-  // the top, so it's guaranteed unassembled on arrival (scrollY 0) even if
-  // the heart already sits within the first viewport on short pages, and
-  // fills in as the visitor scrolls (reversing if they scroll back up).
-  (function setupScrollHeart() {
-    const svg = document.querySelector('.scroll-heart');
-    if (!svg) return;
-
-    const SCROLL_RANGE = 420; // px of scrolling to go from scattered to fully formed
-    const STAGGER = 0.55; // fraction of that range each dot takes to fly in
-    const points = generateHeartPoints();
-    const dots = points.map((pt, i) => {
+  // Builds a set of particle <circle> dots from {x,y,c} points and returns
+  // a render(progress) fn that flies them into place with a per-dot stagger
+  // — shared by the hero heart and every catalog item below.
+  function buildScrollParticles(svg, points, { scatter = 140, stagger = 0.55, dotClass = 'particle' } = {}) {
+    const dots = points.map(pt => {
       const circle = document.createElementNS(SVG_NS, 'circle');
       circle.setAttribute('cx', pt.x);
       circle.setAttribute('cy', pt.y);
       circle.setAttribute('r', 2.4);
       circle.setAttribute('fill', pt.c);
-      circle.classList.add('heart-dot');
+      circle.classList.add(dotClass);
       svg.appendChild(circle);
       return {
         circle,
-        tx: (Math.random() - 0.5) * 260,
-        ty: (Math.random() - 0.5) * 260,
-        start: (i / points.length) * (1 - STAGGER)
+        tx: (Math.random() - 0.5) * scatter,
+        ty: (Math.random() - 0.5) * scatter
       };
     });
+    dots.forEach((d, i) => { d.start = (i / dots.length) * (1 - stagger); });
 
-    let ticking = false;
-
-    function render() {
-      ticking = false;
-      const scrollY = window.scrollY || window.pageYOffset || 0;
-      let progress = scrollY / SCROLL_RANGE;
-      progress = Math.min(1, Math.max(0, progress));
-
+    return function render(progress) {
       dots.forEach(d => {
-        let local = (progress - d.start) / STAGGER;
+        let local = (progress - d.start) / stagger;
         local = Math.min(1, Math.max(0, local));
         const eased = 1 - Math.pow(1 - local, 3);
         d.circle.style.opacity = eased;
         d.circle.style.transform =
           `translate(${d.tx * (1 - eased)}px, ${d.ty * (1 - eased)}px) scale(${Math.max(0.001, eased)})`;
       });
-    }
-
-    function onScroll() {
-      if (!ticking) {
-        ticking = true;
-        requestAnimationFrame(render);
-      }
-    }
-
-    window.addEventListener('scroll', onScroll, { passive: true });
-    window.addEventListener('resize', onScroll);
-    render();
-  })();
-
-  const animatedSvgs = document.querySelectorAll('.animated-particles');
-
-  // Build each catalog item's particles from its real photo's traced
-  // silhouette + sampled colors (PARTICLE_DATA, generated from the product
-  // photos).
-  animatedSvgs.forEach(svg => {
-    const product = svg.getAttribute('data-product');
-    const photoData = product && window.PARTICLE_DATA && window.PARTICLE_DATA[product];
-    const points = photoData ? photoData.points : null;
-    if (!points) return;
-
-    points.forEach((pt, i) => {
-      const circle = document.createElementNS(SVG_NS, 'circle');
-      circle.setAttribute('cx', pt.x);
-      circle.setAttribute('cy', pt.y);
-      circle.setAttribute('r', 2.4);
-      circle.setAttribute('fill', pt.c);
-      circle.setAttribute('opacity', 0);
-      circle.classList.add('particle');
-
-      const delay = i * DELAY_STEP;
-      const randomX = (Math.random() - 0.5) * 140;
-      const randomY = (Math.random() - 0.5) * 140;
-      circle.style.setProperty('--tx', randomX + 'px');
-      circle.style.setProperty('--ty', randomY + 'px');
-      circle.style.animationDelay = delay + 'ms';
-      circle.dataset.delay = delay;
-
-      svg.appendChild(circle);
-    });
-  });
-
-  if (!('IntersectionObserver' in window)) {
-    // No observer support: just show everything.
-    animatedSvgs.forEach(svg => {
-      svg.classList.add('active');
-      const photo = svg.closest('.visual-stage')?.querySelector('.item-photo');
-      if (photo) photo.classList.add('visible');
-    });
-    return;
+    };
   }
 
-  const observer = new IntersectionObserver((entries) => {
-    entries.forEach(entry => {
-      if (entry.isIntersecting) {
-        const svg = entry.target;
-        svg.classList.add('active');
+  // --- Hero heart: assembles as you scroll, not on load or a fixed timer ---
+  // Progress is driven by how far the page has actually been scrolled from
+  // the top, so it's guaranteed unassembled on arrival (scrollY 0) even if
+  // the heart already sits within the first viewport on short pages, and
+  // fills in as the visitor scrolls (reversing if they scroll back up).
+  (function setupHeroHeart() {
+    const svg = document.querySelector('.scroll-heart');
+    if (!svg) return;
+    const SCROLL_RANGE = 420; // px of scrolling to go from scattered to fully formed
+    const renderDots = buildScrollParticles(svg, generateHeartPoints(), { scatter: 260, dotClass: 'heart-dot' });
+    renderers.push((scrollY) => {
+      renderDots(Math.min(1, Math.max(0, scrollY / SCROLL_RANGE)));
+    });
+  })();
 
-        const particles = svg.querySelectorAll('.particle');
-        let maxDelay = 0;
-        particles.forEach(p => {
-          const d = parseInt(p.dataset.delay, 10) || 0;
-          if (d > maxDelay) maxDelay = d;
-        });
+  // --- Catalog items: particles assemble as each one scrolls up into
+  // view, then crossfade into the real photo — progress is each item's
+  // own position in the viewport, so items scattered down a long page
+  // assemble independently as you scroll through them (and un-assemble
+  // if you scroll back up past one).
+  document.querySelectorAll('.animated-particles[data-product]').forEach(svg => {
+    const product = svg.getAttribute('data-product');
+    const photoData = window.PARTICLE_DATA && window.PARTICLE_DATA[product];
+    if (!photoData) return;
 
-        const stage = svg.closest('.visual-stage');
-        const photo = stage ? stage.querySelector('.item-photo') : null;
-        if (photo) {
-          setTimeout(() => {
-            photo.classList.add('visible');
-            svg.classList.add('faded');
-          }, maxDelay + PARTICLE_DURATION);
-        }
+    const stage = svg.closest('.visual-stage');
+    const photo = stage ? stage.querySelector('.item-photo') : null;
+    const renderDots = buildScrollParticles(svg, photoData.points, { scatter: 140 });
 
-        observer.unobserve(svg);
+    renderers.push(() => {
+      const rect = svg.getBoundingClientRect();
+      const vh = window.innerHeight || document.documentElement.clientHeight;
+      const entryLine = vh * 0.9;   // item top crossing here = start assembling
+      const doneLine = vh * 0.4;    // item top crossing here = fully assembled
+      let progress = (entryLine - rect.top) / (entryLine - doneLine);
+      progress = Math.min(1, Math.max(0, progress));
+
+      renderDots(progress);
+
+      // Crossfade into the real photo only in the last stretch of assembly.
+      const crossfade = Math.min(1, Math.max(0, (progress - 0.8) / 0.2));
+      svg.style.opacity = 1 - crossfade;
+      if (photo) {
+        photo.style.opacity = crossfade;
+        photo.style.transform = `scale(${0.9 + 0.1 * crossfade})`;
       }
     });
-  }, {
-    threshold: 0.2,
-    rootMargin: '0px 0px -50px 0px'
   });
 
-  animatedSvgs.forEach(svg => observer.observe(svg));
+  requestRender();
 });
 
 if ("serviceWorker" in navigator) {
