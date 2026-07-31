@@ -330,6 +330,14 @@ section h2 {
   animation-play-state: running;
 }
 
+/* Hero heart: no CSS keyframe here — opacity/transform are set directly
+   per-frame from JS, driven by scroll position (see setupScrollHeart). */
+.heart-dot {
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
 /* Footer */
 .site-footer {
   padding: 40px 0;
