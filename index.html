@@ -44,30 +44,7 @@
         <a href="#catalog" class="btn btn-primary">Смотреть каталог</a>
       </div>
       <div class="hero-right">
-        <svg class="particles-hero" viewBox="0 0 400 400" xmlns="http://www.w3.org/2000/svg">
-          <!-- Косметичка из частиц -->
-          <circle cx="200" cy="200" r="2" fill="#ff3ea5" opacity="0.8"/>
-          <circle cx="200" cy="180" r="2" fill="#ff6ec7" opacity="0.7"/>
-          <circle cx="220" cy="200" r="2" fill="#ff3ea5" opacity="0.8"/>
-          <circle cx="180" cy="200" r="2" fill="#ff6ec7" opacity="0.7"/>
-          <circle cx="200" cy="220" r="2" fill="#ff3ea5" opacity="0.9"/>
-          <circle cx="210" cy="190" r="2" fill="#ff6ec7" opacity="0.6"/>
-          <circle cx="190" cy="190" r="2" fill="#ff3ea5" opacity="0.8"/>
-          <circle cx="210" cy="210" r="2" fill="#ff6ec7" opacity="0.7"/>
-          <circle cx="190" cy="210" r="2" fill="#ff3ea5" opacity="0.7"/>
-          <circle cx="230" cy="190" r="1.5" fill="#ff3ea5" opacity="0.5"/>
-          <circle cx="170" cy="190" r="1.5" fill="#ff6ec7" opacity="0.5"/>
-          <circle cx="230" cy="210" r="1.5" fill="#ff6ec7" opacity="0.5"/>
-          <circle cx="170" cy="210" r="1.5" fill="#ff3ea5" opacity="0.5"/>
-          <circle cx="200" cy="160" r="1.5" fill="#ff6ec7" opacity="0.4"/>
-          <circle cx="200" cy="240" r="1.5" fill="#ff3ea5" opacity="0.4"/>
-          <circle cx="240" cy="200" r="1.5" fill="#ff6ec7" opacity="0.4"/>
-          <circle cx="160" cy="200" r="1.5" fill="#ff3ea5" opacity="0.4"/>
-          <circle cx="220" cy="180" r="1" fill="#ff3ea5" opacity="0.3"/>
-          <circle cx="180" cy="180" r="1" fill="#ff6ec7" opacity="0.3"/>
-          <circle cx="220" cy="220" r="1" fill="#ff6ec7" opacity="0.3"/>
-          <circle cx="180" cy="220" r="1" fill="#ff3ea5" opacity="0.3"/>
-        </svg>
+        <svg class="particles-hero animated-particles" data-shape="heart" viewBox="0 0 300 300" xmlns="http://www.w3.org/2000/svg"></svg>
       </div>
     </div>
   </section>
@@ -190,20 +167,59 @@
 <script>
 document.addEventListener('DOMContentLoaded', () => {
   const SVG_NS = 'http://www.w3.org/2000/svg';
-  const DELAY_STEP = 16; // ms between each particle's start, in silhouette order
-  const PARTICLE_DURATION = 800; // matches the CSS animation duration
+  const DELAY_STEP = 9; // ms between each particle's start, in silhouette order
+  const PARTICLE_DURATION = 500; // matches the CSS animation duration
+
+  // Traces a parametric heart curve into outline + interior fill points,
+  // in the same {x,y,c} shape as the product photo data, so the hero can
+  // reuse the exact same particle-assembly pipeline as the catalog items.
+  function generateHeartPoints() {
+    const SCALE = 7.875, CX = 150, CY = 130;
+    const heartXY = (t) => ({
+      x: 16 * Math.sin(t) ** 3,
+      y: -(13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t))
+    });
+    const pinkOrLight = () => (Math.random() < 0.5 ? '#ff3ea5' : '#ff6ec7');
+    const points = [];
+
+    const OUTLINE_COUNT = 46;
+    for (let i = 0; i < OUTLINE_COUNT; i++) {
+      const p = heartXY((i / OUTLINE_COUNT) * Math.PI * 2);
+      points.push({ x: CX + p.x * SCALE, y: CY + p.y * SCALE, c: i % 2 ? '#ff6ec7' : '#ff3ea5' });
+    }
+
+    const FILL_COUNT = 30;
+    for (let i = 0; i < FILL_COUNT; i++) {
+      const t = Math.random() * Math.PI * 2;
+      const r = 0.15 + Math.random() * 0.75;
+      const p = heartXY(t);
+      const c = Math.random() < 0.12 ? '#ffffff' : pinkOrLight();
+      points.push({ x: CX + p.x * SCALE * r, y: CY + p.y * SCALE * r, c });
+    }
+
+    // Shuffle so outline and fill dots interleave while assembling.
+    for (let i = points.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [points[i], points[j]] = [points[j], points[i]];
+    }
+    return points;
+  }
 
   const animatedSvgs = document.querySelectorAll('.animated-particles');
 
-  // Build each item's particles from its real photo's traced silhouette +
-  // sampled colors (PARTICLE_DATA, generated from the product photos), so
-  // every dot flies in as the actual color of that spot on the bag.
+  // Build each item's particles either from its real photo's traced
+  // silhouette + sampled colors (PARTICLE_DATA, generated from the product
+  // photos) or, for the hero, from a generated heart shape — both feed the
+  // same particle-assembly pipeline below.
   animatedSvgs.forEach(svg => {
     const product = svg.getAttribute('data-product');
-    const data = window.PARTICLE_DATA && window.PARTICLE_DATA[product];
-    if (!data) return;
+    const photoData = product && window.PARTICLE_DATA && window.PARTICLE_DATA[product];
+    const points = photoData ? photoData.points
+      : svg.dataset.shape === 'heart' ? generateHeartPoints()
+      : null;
+    if (!points) return;
 
-    data.points.forEach((pt, i) => {
+    points.forEach((pt, i) => {
       const circle = document.createElementNS(SVG_NS, 'circle');
       circle.setAttribute('cx', pt.x);
       circle.setAttribute('cy', pt.y);
